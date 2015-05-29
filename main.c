@@ -13,7 +13,7 @@
 #include<unistd.h>	//getpid
 
 //List of DNS Servers registered on the system
-char dns_servers[10][100];
+char dns_servers[16][128];
 int dns_server_count = 0;
 //Types of DNS resource records :)
 
@@ -29,7 +29,7 @@ void ngethostbyname(unsigned char*, int);
 void ChangetoDnsNameFormat(unsigned char*, unsigned char*);
 unsigned char* ReadName(unsigned char*, unsigned char*, int*);
 void
-get_dns_servers();
+loadConf();
 
 //DNS header structure
 
@@ -98,7 +98,7 @@ main(int argc, char *argv[])
     unsigned char hostname[100];
 
     //Get the DNS servers from the resolv.conf file
-    get_dns_servers();
+    loadConf();
 
     //Get the hostname from the terminal
     printf("Enter Hostname to Lookup : ");
@@ -374,39 +374,46 @@ ReadName(unsigned char* reader, unsigned char* buffer, int* count)
  * Get the DNS servers from /etc/resolv.conf file on Linux
  * */
 void
-get_dns_servers()
+loadConf()
 {
-    FILE *fp;
-    char line[200], *p;
-    if ((fp = fopen("/etc/resolv.conf", "r")) == NULL)
+    FILE *file;
+    char *line, *ip, *save;
+    int i, sz_line;
+
+    i = 0;
+    strcpy(dns_servers[i++], "8.8.8.8\0");
+    strcpy(dns_servers[i++], "208.67.222.222\0");
+    strcpy(dns_servers[i++], "208.67.220.220\0");
+
+    if ((file = fopen("/etc/resolv.conf", "r")) == NULL)
+        return;
+
+    sz_line = 128;
+    line = (char *) malloc(sz_line);
+    if (line == NULL)
     {
-        printf("Failed opening /etc/resolv.conf file \n");
+        fclose(file);
+        return;
     }
 
-    while (fgets(line, 200, fp))
+    while (bzero(line, sz_line),
+            fgets(line, sz_line, file) != NULL)
     {
         if (line[0] == '#')
-        {
             continue;
-        }
         if (strncmp(line, "nameserver", 10) == 0)
         {
-            p = strtok(line, " ");
-            p = strtok(NULL, " ");
-
-            //p now is the dns ip :)
-            //????
+            strtok_r(line, " ", &save);
+            ip = strtok_r(NULL, " ", &save);
+            strcpy(dns_servers[i++], ip);
         }
     }
-
-    strcpy(dns_servers[0], "208.67.222.222");
-    strcpy(dns_servers[1], "208.67.220.220");
+    
+    free(line);
+    line = (char *) NULL;
+    fclose(file);
 }
 
-/*
- * This will convert www.google.com to 3www6google3com 
- * got it :)
- * */
 void
 ChangetoDnsNameFormat(unsigned char* dns, unsigned char* host)
 {
