@@ -26,9 +26,12 @@ int dns_server_count = 0;
 #define T_MX 15 //Mail server
 
 //Function Prototypes
-void ngethostbyname(unsigned char*, int);
-void encodeHostname(unsigned char*, unsigned char*);
-unsigned char* decodeHostname(unsigned char*, unsigned char*, int*);
+void
+resolveHostname(unsigned char*, int);
+void
+encodeHostname(unsigned char*, unsigned char*);
+unsigned char *
+decodeHostname(unsigned char*, unsigned char*, int*, unsigned char*);
 void
 loadConf();
 
@@ -106,7 +109,7 @@ main(int argc, char *argv[])
     scanf("%s", hostname);
 
     //Now get the ip of this hostname , A record
-    ngethostbyname(hostname, T_A);
+    resolveHostname(hostname, T_A);
 
     return 0;
 }
@@ -115,7 +118,7 @@ main(int argc, char *argv[])
  * Perform a DNS query by sending a packet
  * */
 void
-ngethostbyname(unsigned char *host, int query_type)
+resolveHostname(unsigned char *host, int query_type)
 {
     unsigned char buf[BUFFER_SIZE], *qname, *reader;
     int i, j, stop, s;
@@ -187,7 +190,7 @@ ngethostbyname(unsigned char *host, int query_type)
 
     for (i = 0; i < ntohs(dns->ans_count); i++)
     {
-        answers[i].name = decodeHostname(reader, buf, &stop);
+        answers[i].name = decodeHostname(reader, buf, &stop, (unsigned char *) NULL);
         reader = reader + stop;
 
         answers[i].resource = (struct R_DATA*) (reader);
@@ -208,7 +211,7 @@ ngethostbyname(unsigned char *host, int query_type)
         }
         else
         {
-            answers[i].rdata = decodeHostname(reader, buf, &stop);
+            answers[i].rdata = decodeHostname(reader, buf, &stop, (unsigned char *) NULL);
             reader = reader + stop;
         }
     }
@@ -216,20 +219,20 @@ ngethostbyname(unsigned char *host, int query_type)
     //read authorities
     for (i = 0; i < ntohs(dns->auth_count); i++)
     {
-        auth[i].name = decodeHostname(reader, buf, &stop);
+        auth[i].name = decodeHostname(reader, buf, &stop, (unsigned char *) NULL);
         reader += stop;
 
         auth[i].resource = (struct R_DATA*) (reader);
         reader += sizeof (struct R_DATA);
 
-        auth[i].rdata = decodeHostname(reader, buf, &stop);
+        auth[i].rdata = decodeHostname(reader, buf, &stop, (unsigned char *) NULL);
         reader += stop;
     }
 
     //read additional
     for (i = 0; i < ntohs(dns->add_count); i++)
     {
-        addit[i].name = decodeHostname(reader, buf, &stop);
+        addit[i].name = decodeHostname(reader, buf, &stop, (unsigned char *) NULL);
         reader += stop;
 
         addit[i].resource = (struct R_DATA*) (reader);
@@ -246,7 +249,7 @@ ngethostbyname(unsigned char *host, int query_type)
         }
         else
         {
-            addit[i].rdata = decodeHostname(reader, buf, &stop);
+            addit[i].rdata = decodeHostname(reader, buf, &stop, (unsigned char *) NULL);
             reader += stop;
         }
     }
@@ -311,61 +314,53 @@ ngethostbyname(unsigned char *host, int query_type)
 
 }
 
-/*
- * 
- * */
-u_char*
-decodeHostname(unsigned char* reader, unsigned char* buffer, int* count)
+unsigned char*
+decodeHostname(unsigned char* reader, unsigned char* buffer,
+        int* count, unsigned char * name)
 {
-    unsigned char *name;
-    unsigned int p = 0, jumped = 0, offset;
-    int i, j;
+    unsigned char flag;
+    unsigned char len;
+    unsigned short off;
 
-    *count = 1;
-    name = (unsigned char*) malloc(256);
+    len = 0;
+    if (count != NULL)
+        *count = 1;
 
-    name[0] = '\0';
+    if (name == NULL)
+    {
+        name = (unsigned char*) malloc(256);
+        if (name == NULL)
+            return (unsigned char *) NULL;
+        bzero(name, 256);
+    }
 
-    //read the names in 3www6google3com format
     while (*reader != 0)
     {
-        if (*reader >= 192)
+        flag = *reader >> 6;
+        if (flag == 3)
         {
-            offset = (*reader)*256 + *(reader + 1) - 49152; //49152 = 11000000 00000000 ;)
-            reader = buffer + offset - 1;
-            jumped = 1; //we have jumped to another location so counting wont go up!
+            off = *(unsigned short *) reader;
+            off &= 63;
+            reader = buffer + off - 1;
+            decodeHostname(reader, buffer, (int *) NULL, name);
+            if (count != NULL)
+                ++*count;
+            break;
         }
-        else
+        else if (flag == 0)
         {
-            name[p++] = *reader;
-        }
-
-        reader = reader + 1;
-
-        if (jumped == 0)
-        {
-            *count = *count + 1; //if we havent jumped to another location then we can count up
+            flag = *reader;
+            memcpy(name + len, ++reader, flag);
+            len += flag;
+            reader += flag;
+            name[len++] = '.';
+            if (count != NULL)
+                *count += (1 + flag);
         }
     }
 
-    name[p] = '\0'; //string complete
-    if (jumped == 1)
-    {
-        *count = *count + 1; //number of steps we actually moved forward in the packet
-    }
+    name[len] = '\0';
 
-    //now convert 3www6google3com0 to www.google.com
-    for (i = 0; i < (int) strlen((const char*) name); i++)
-    {
-        p = name[i];
-        for (j = 0; j < (int) p; j++)
-        {
-            name[i] = name[i + 1];
-            i = i + 1;
-        }
-        name[i] = '.';
-    }
-    name[i - 1] = '\0'; //remove the last dot
     return name;
 }
 
