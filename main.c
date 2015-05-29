@@ -26,12 +26,9 @@ int dns_server_count = 0;
 #define T_MX 15 //Mail server
 
 //Function Prototypes
-void
-resolveHostname(unsigned char*, int);
-void
-encodeHostname(unsigned char*, unsigned char*);
-unsigned char *
-decodeHostname(unsigned char*, unsigned char*, int*, unsigned char*);
+void ngethostbyname(unsigned char*, int);
+void encodeHostname(unsigned char*, unsigned char*);
+unsigned char* decodeHostname(unsigned char*, unsigned char*, int*);
 void
 loadConf();
 
@@ -109,7 +106,7 @@ main(int argc, char *argv[])
     scanf("%s", hostname);
 
     //Now get the ip of this hostname , A record
-    resolveHostname(hostname, T_A);
+    ngethostbyname(hostname, T_A);
 
     return 0;
 }
@@ -118,7 +115,7 @@ main(int argc, char *argv[])
  * Perform a DNS query by sending a packet
  * */
 void
-resolveHostname(unsigned char *host, int query_type)
+ngethostbyname(unsigned char *host, int query_type)
 {
     unsigned char buf[BUFFER_SIZE], *qname, *reader;
     int i, j, stop, s;
@@ -190,7 +187,7 @@ resolveHostname(unsigned char *host, int query_type)
 
     for (i = 0; i < ntohs(dns->ans_count); i++)
     {
-        answers[i].name = decodeHostname(reader, buf, &stop, (unsigned char *) NULL);
+        answers[i].name = decodeHostname(reader, buf, &stop);
         reader = reader + stop;
 
         answers[i].resource = (struct R_DATA*) (reader);
@@ -211,7 +208,7 @@ resolveHostname(unsigned char *host, int query_type)
         }
         else
         {
-            answers[i].rdata = decodeHostname(reader, buf, &stop, (unsigned char *) NULL);
+            answers[i].rdata = decodeHostname(reader, buf, &stop);
             reader = reader + stop;
         }
     }
@@ -219,20 +216,20 @@ resolveHostname(unsigned char *host, int query_type)
     //read authorities
     for (i = 0; i < ntohs(dns->auth_count); i++)
     {
-        auth[i].name = decodeHostname(reader, buf, &stop, (unsigned char *) NULL);
+        auth[i].name = decodeHostname(reader, buf, &stop);
         reader += stop;
 
         auth[i].resource = (struct R_DATA*) (reader);
         reader += sizeof (struct R_DATA);
 
-        auth[i].rdata = decodeHostname(reader, buf, &stop, (unsigned char *) NULL);
+        auth[i].rdata = decodeHostname(reader, buf, &stop);
         reader += stop;
     }
 
     //read additional
     for (i = 0; i < ntohs(dns->add_count); i++)
     {
-        addit[i].name = decodeHostname(reader, buf, &stop, (unsigned char *) NULL);
+        addit[i].name = decodeHostname(reader, buf, &stop);
         reader += stop;
 
         addit[i].resource = (struct R_DATA*) (reader);
@@ -249,7 +246,7 @@ resolveHostname(unsigned char *host, int query_type)
         }
         else
         {
-            addit[i].rdata = decodeHostname(reader, buf, &stop, (unsigned char *) NULL);
+            addit[i].rdata = decodeHostname(reader, buf, &stop);
             reader += stop;
         }
     }
@@ -314,59 +311,60 @@ resolveHostname(unsigned char *host, int query_type)
 
 }
 
-unsigned char*
-decodeHostname(unsigned char* reader, unsigned char* buffer,
-        int* count, unsigned char * name)
+unsigned char *
+decodeHostname(unsigned char* reader, unsigned char* buffer, int* count)
 {
+    unsigned char *name;
     unsigned char flag;
-    unsigned char len;
-    unsigned short off;
+    unsigned short offset;
+    unsigned int i, j;
 
-    len = 0;
-    if (count != NULL)
-        *count = 1;
-
+    i = 0;
+    j = 0;
+    *count = 1;
+    name = (unsigned char*) malloc(256);
     if (name == NULL)
-    {
-        name = (unsigned char*) malloc(256);
-        if (name == NULL)
-            return (unsigned char *) NULL;
-        bzero(name, 256);
-    }
+        return (unsigned char *) NULL;
 
     while (*reader != 0)
     {
         flag = *reader >> 6;
+        printf("Flag: %i\r\n", flag);
         if (flag == 3)
         {
-            off = *(unsigned short *) reader;
-            off &= 63;
-            reader = buffer + off - 1;
-            decodeHostname(reader, buffer, (int *) NULL, name);
-            if (count != NULL)
-                ++*count;
-            break;
+            offset = (*reader)*256 + *(reader + 1) - 49152;
+            printf("    Offset: %i\r\n", offset);
+            reader = buffer + offset;
+            j = 1;
         }
         else if (flag == 0)
         {
             flag = *reader;
-            memcpy(name + len, ++reader, flag);
-            len += flag;
+            printf("    Len: %i\r\n", flag);
+            memcpy(name + i, ++reader, flag);
+            printf("    String: %s\r\n", name + i);
+            i += flag;
+            name[i++] = '.';
             reader += flag;
-            name[len++] = '.';
-            if (count != NULL)
+            if (j == 0)
                 *count += (1 + flag);
+        }
+        else
+        {
+            free(name);
+            name = (unsigned char *) NULL;
+            return name;
         }
     }
 
-    name[len] = '\0';
+    if (j == 1)
+        ++*count;
+
+    name[i - 1] = '\0';
 
     return name;
 }
 
-/*
- * Get the DNS servers from /etc/resolv.conf file on Linux
- * */
 void
 loadConf()
 {
