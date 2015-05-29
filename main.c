@@ -12,6 +12,7 @@
 #include<netinet/in.h>
 #include<unistd.h>	//getpid
 
+#define BUFFER_SIZE 65536
 //List of DNS Servers registered on the system
 char dns_servers[16][128];
 int dns_server_count = 0;
@@ -26,8 +27,8 @@ int dns_server_count = 0;
 
 //Function Prototypes
 void ngethostbyname(unsigned char*, int);
-void ChangetoDnsNameFormat(unsigned char*, unsigned char*);
-unsigned char* ReadName(unsigned char*, unsigned char*, int*);
+void encodeHostname(unsigned char*, unsigned char*);
+unsigned char* decodeHostname(unsigned char*, unsigned char*, int*);
 void
 loadConf();
 
@@ -116,7 +117,7 @@ main(int argc, char *argv[])
 void
 ngethostbyname(unsigned char *host, int query_type)
 {
-    unsigned char buf[65536], *qname, *reader;
+    unsigned char buf[BUFFER_SIZE], *qname, *reader;
     int i, j, stop, s;
 
     struct sockaddr_in a;
@@ -136,28 +137,17 @@ ngethostbyname(unsigned char *host, int query_type)
     dest.sin_addr.s_addr = inet_addr(dns_servers[0]); //dns servers
 
     //Set the DNS structure to standard queries
+    bzero(buf, BUFFER_SIZE);
     dns = (struct DNS_HEADER *) &buf;
 
-    dns->id = (unsigned short) htons(getpid());
-    dns->qr = 0; //This is a query
-    dns->opcode = 0; //This is a standard query
-    dns->aa = 0; //Not Authoritative
-    dns->tc = 0; //This message is not truncated
-    dns->rd = 1; //Recursion Desired
-    dns->ra = 0; //Recursion not available! hey we dont have it (lol)
-    dns->z = 0;
-    dns->ad = 0;
-    dns->cd = 0;
-    dns->rcode = 0;
-    dns->q_count = htons(1); //we have only 1 question
-    dns->ans_count = 0;
-    dns->auth_count = 0;
-    dns->add_count = 0;
+    dns->id = htons((unsigned short) (0xffffu & getpid()));
+    dns->rd = 1;
+    dns->q_count = htons(1);
 
     //point to the query portion
     qname = (unsigned char*) &buf[sizeof (struct DNS_HEADER)];
 
-    ChangetoDnsNameFormat(qname, host);
+    encodeHostname(qname, host);
     qinfo = (struct QUESTION*) &buf[sizeof (struct DNS_HEADER) + (strlen((const char*) qname) + 1)]; //fill it
 
     qinfo->qtype = htons(query_type); //type of the query , A , MX , CNAME , NS etc
@@ -167,15 +157,17 @@ ngethostbyname(unsigned char *host, int query_type)
     if (sendto(s, (char*) buf, sizeof (struct DNS_HEADER) + (strlen((const char*) qname) + 1) + sizeof (struct QUESTION), 0, (struct sockaddr*) &dest, sizeof (dest)) < 0)
     {
         perror("sendto failed");
+        return;
     }
     printf("Done");
 
     //Receive the answer
     i = sizeof dest;
     printf("\nReceiving answer...");
-    if (recvfrom(s, (char*) buf, 65536, 0, (struct sockaddr*) &dest, (socklen_t*) & i) < 0)
+    if (recvfrom(s, (char*) buf, BUFFER_SIZE, 0, (struct sockaddr*) &dest, (socklen_t*) & i) < 0)
     {
         perror("recvfrom failed");
+        return;
     }
     printf("Done");
 
@@ -195,7 +187,7 @@ ngethostbyname(unsigned char *host, int query_type)
 
     for (i = 0; i < ntohs(dns->ans_count); i++)
     {
-        answers[i].name = ReadName(reader, buf, &stop);
+        answers[i].name = decodeHostname(reader, buf, &stop);
         reader = reader + stop;
 
         answers[i].resource = (struct R_DATA*) (reader);
@@ -216,7 +208,7 @@ ngethostbyname(unsigned char *host, int query_type)
         }
         else
         {
-            answers[i].rdata = ReadName(reader, buf, &stop);
+            answers[i].rdata = decodeHostname(reader, buf, &stop);
             reader = reader + stop;
         }
     }
@@ -224,20 +216,20 @@ ngethostbyname(unsigned char *host, int query_type)
     //read authorities
     for (i = 0; i < ntohs(dns->auth_count); i++)
     {
-        auth[i].name = ReadName(reader, buf, &stop);
+        auth[i].name = decodeHostname(reader, buf, &stop);
         reader += stop;
 
         auth[i].resource = (struct R_DATA*) (reader);
         reader += sizeof (struct R_DATA);
 
-        auth[i].rdata = ReadName(reader, buf, &stop);
+        auth[i].rdata = decodeHostname(reader, buf, &stop);
         reader += stop;
     }
 
     //read additional
     for (i = 0; i < ntohs(dns->add_count); i++)
     {
-        addit[i].name = ReadName(reader, buf, &stop);
+        addit[i].name = decodeHostname(reader, buf, &stop);
         reader += stop;
 
         addit[i].resource = (struct R_DATA*) (reader);
@@ -254,7 +246,7 @@ ngethostbyname(unsigned char *host, int query_type)
         }
         else
         {
-            addit[i].rdata = ReadName(reader, buf, &stop);
+            addit[i].rdata = decodeHostname(reader, buf, &stop);
             reader += stop;
         }
     }
@@ -279,6 +271,8 @@ ngethostbyname(unsigned char *host, int query_type)
             printf("has alias name : %s", answers[i].rdata);
         }
 
+        free(answers[i].name);
+        free(answers[i].rdata);
         printf("\n");
     }
 
@@ -292,6 +286,8 @@ ngethostbyname(unsigned char *host, int query_type)
         {
             printf("has nameserver : %s", auth[i].rdata);
         }
+        free(auth[i].name);
+        free(auth[i].rdata);
         printf("\n");
     }
 
@@ -307,16 +303,19 @@ ngethostbyname(unsigned char *host, int query_type)
             a.sin_addr.s_addr = (*p);
             printf("has IPv4 address : %s", inet_ntoa(a.sin_addr));
         }
+        free(addit[i].name);
+        free(addit[i].rdata);
         printf("\n");
     }
-    return;
+
+
 }
 
 /*
  * 
  * */
 u_char*
-ReadName(unsigned char* reader, unsigned char* buffer, int* count)
+decodeHostname(unsigned char* reader, unsigned char* buffer, int* count)
 {
     unsigned char *name;
     unsigned int p = 0, jumped = 0, offset;
@@ -408,14 +407,14 @@ loadConf()
             strcpy(dns_servers[i++], ip);
         }
     }
-    
+
     free(line);
     line = (char *) NULL;
     fclose(file);
 }
 
 void
-ChangetoDnsNameFormat(unsigned char* dns, unsigned char* host)
+encodeHostname(unsigned char* dns, unsigned char* host)
 {
     int lock = 0, i;
     strcat((char*) host, ".");
