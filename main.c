@@ -218,8 +218,10 @@ resolveHostname(
                     || send(sock, buf, len, 0) < 0)
             {
                 printf("failed\r\n");
-                free(buf); buf = NULL;
-                close(sock); sock = 0;
+                free(buf);
+                buf = NULL;
+                close(sock);
+                sock = 0;
                 return;
             }
             printf("done\r\nReceiving response...");
@@ -228,8 +230,10 @@ resolveHostname(
                     || recv(sock, buf, BUFFER_SIZE, 0) < 0)
             {
                 printf("failed\r\n");
-                free(buf); buf = NULL;
-                close(sock); sock = 0;
+                free(buf);
+                buf = NULL;
+                close(sock);
+                sock = 0;
                 return;
             }
             printf("done\r\n");
@@ -245,7 +249,7 @@ resolveHostname(
     sock = 0;
 
     dns = (struct DNS_HEADER*) buf;
-    
+
     switch (dns->rcode)
     {
         case 0:
@@ -516,20 +520,28 @@ loadConf()
 void
 encodeHostname(unsigned char* dns, const unsigned char* host)
 {
-    int lock = 0, i;
-    strcat((char*) host, ".");
+    char *dot;
+    size_t len;
 
-    for (i = 0; i < strlen((char*) host); i++)
+    len = strlen(host);
+    dot = dns + 1;
+    memcpy(dot, host, len);
+    while (1)
     {
-        if (host[i] == '.')
+        dot = strchr(dns + 1, '.');
+        if (dot == NULL)
         {
-            *dns++ = i - lock;
-            for (; lock < i; lock++)
-            {
-                *dns++ = host[lock];
-            }
-            lock++;
+            len = strlen(dns + 1);
+            //printf("Dot not found[%i:%.*s].\r\n", len, len, dns + 1);
+            *dns = (unsigned char) (len & 0xffu);
+            break;
+        }
+        else
+        {
+            len = (int) dot - ((int) dns + 1);
+            //printf("Dot found    [%i:%.*s].\r\n", len, len, dns + 1);
+            *dns++ = (unsigned char) (len & 0xffu);
+            dns += len;
         }
     }
-    *dns++ = '\0';
 }
