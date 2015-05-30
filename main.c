@@ -1,152 +1,188 @@
-#include<stdio.h>
-#include<string.h>
-#include<stdlib.h>
-#include<sys/socket.h>
-#include<arpa/inet.h>
+
+//DNS Query Program on Linux
+//Author : Silver Moon (m00n.silv3r@gmail.com)
+//Dated : 29/4/2009
+
+//Header Files
+#include<stdio.h>	//printf
+#include<string.h>	//strlen
+#include<stdlib.h>	//malloc
+#include<sys/socket.h>	//you know what this is for
+#include<arpa/inet.h>	//inet_addr , inet_ntoa , ntohs etc
 #include<netinet/in.h>
-#include<unistd.h>
+#include<unistd.h>	//getpid
 
 #define BUFFER_SIZE 65536
-
+//List of DNS Servers registered on the system
 char dns_servers[16][128];
 int dns_server_count = 0;
+//Types of DNS resource records :)
 
-#define T_A 1
-#define T_NS 2
-#define T_CNAME 5
-#define T_SOA 6
-#define T_PTR 12
-#define T_MX 15
+#define T_A 1 //Ipv4 address
+#define T_NS 2 //Nameserver
+#define T_CNAME 5 // canonical name
+#define T_SOA 6 /* start of authority zone */
+#define T_PTR 12 /* domain name pointer */
+#define T_MX 15 //Mail server
 
-void
-resolveHostname(unsigned char *, int);
-void
-encodeHostname(unsigned char *, unsigned char *);
-unsigned char*
-decodeHostname(unsigned char *, unsigned char *, int *);
+//Function Prototypes
+void ngethostbyname(unsigned char*, int);
+void encodeHostname(unsigned char*, unsigned char*);
+unsigned char* decodeHostname(unsigned char*, unsigned char*, int*);
 void
 loadConf();
 
-typedef struct
+//DNS header structure
+
+struct DNS_HEADER
 {
-    unsigned short id;
+    unsigned short id; // identification number
 
-    unsigned char rd : 1;
-    unsigned char tc : 1;
-    unsigned char aa : 1;
-    unsigned char opcode : 4;
-    unsigned char qr : 1;
+    unsigned char rd : 1; // recursion desired
+    unsigned char tc : 1; // truncated message
+    unsigned char aa : 1; // authoritive answer
+    unsigned char opcode : 4; // purpose of message
+    unsigned char qr : 1; // query/response flag
 
-    unsigned char rcode : 4;
-    unsigned char z : 3;
-    unsigned char ra : 1;
+    unsigned char rcode : 4; // response code
+    unsigned char cd : 1; // checking disabled
+    unsigned char ad : 1; // authenticated data
+    unsigned char z : 1; // its z! reserved
+    unsigned char ra : 1; // recursion available
 
-    unsigned short q_count;
-    unsigned short ans_count;
-    unsigned short auth_count;
-    unsigned short add_count;
-} dns_header;
+    unsigned short q_count; // number of question entries
+    unsigned short ans_count; // number of answer entries
+    unsigned short auth_count; // number of authority entries
+    unsigned short add_count; // number of resource entries
+};
 
-typedef struct
+//Constant sized fields of query structure
+
+struct QUESTION
 {
     unsigned short qtype;
     unsigned short qclass;
-} dns_query;
+};
 
+//Constant sized fields of the resource record structure
 #pragma pack(push, 1)
 
-typedef struct
+struct R_DATA
 {
     unsigned short type;
     unsigned short _class;
     unsigned int ttl;
     unsigned short data_len;
-} dns_res_data;
+};
 #pragma pack(pop)
+
+//Pointers to resource record contents
+
+struct RES_RECORD
+{
+    unsigned char *name;
+    struct R_DATA *resource;
+    unsigned char *rdata;
+};
+
+//Structure of a Query
 
 typedef struct
 {
     unsigned char *name;
-    dns_res_data *resource;
-    unsigned char *rdata;
-} dns_res_record;
+    struct QUESTION *ques;
+} QUERY;
 
 int
 main(int argc, char *argv[])
 {
-    unsigned char hostname[100];
-    
+    unsigned char hostname[256];
+
+    //Get the DNS servers from the resolv.conf file
     loadConf();
 
+    //Get the hostname from the terminal
     printf("Enter Hostname to Lookup : ");
     scanf("%s", hostname);
 
-    resolveHostname(hostname, T_A);
+    //Now get the ip of this hostname , A record
+    ngethostbyname(hostname, T_A);
 
     return 0;
 }
 
+
+/*
+ * Perform a DNS query by sending a packet
+ * */
 void
-resolveHostname(unsigned char *host, int query_type)
+ngethostbyname(unsigned char *host, int query_type)
 {
-    unsigned char buf[BUFFER_SIZE], *qname, *reader;
+    unsigned char *buf, *qname, *reader;
     int i, j, stop, s;
-
     struct sockaddr_in a;
-
-    dns_res_record answers[20], auth[20], addit[20];
+    struct RES_RECORD answers[20], auth[20], addit[20]; //the replies from the DNS server
     struct sockaddr_in dest;
-
-    dns_header *dns = NULL;
-    dns_query *qinfo = NULL;
+    struct DNS_HEADER *dns = NULL;
+    struct QUESTION *qinfo = NULL;
+    
+    printf("Allocating memory...");
+    buf = (unsigned char *) malloc(BUFFER_SIZE);
+    if (buf == NULL)
+        return;
+    bzero(buf, BUFFER_SIZE);
 
     printf("Resolving %s", host);
 
-    s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP); //UDP packet for DNS queries
 
     dest.sin_family = AF_INET;
     dest.sin_port = htons(53);
-    dest.sin_addr.s_addr = inet_addr(dns_servers[0]);
+    dest.sin_addr.s_addr = inet_addr(dns_servers[0]); //dns servers
 
-
-    bzero(buf, BUFFER_SIZE);
-    dns = (dns_header *) &buf;
+    //Set the DNS structure to standard queries
+    dns = (struct DNS_HEADER *) buf;
+    printf("\r\nPointers:  %p %p\r\n", &buf, buf);
 
     dns->id = htons((unsigned short) (0xffffu & getpid()));
     dns->rd = 1;
     dns->q_count = htons(1);
 
-
-    qname = (unsigned char*) &buf[sizeof (dns_header)];
+    //point to the query portion
+    qname = (unsigned char*) &buf[sizeof (struct DNS_HEADER)];
 
     encodeHostname(qname, host);
-    qinfo = (dns_query*) &buf[sizeof (dns_header) + (strlen((const char*) qname) + 1)];
+    qinfo = (struct QUESTION*) &buf[sizeof (struct DNS_HEADER) + (strlen((const char*) qname) + 1)]; //fill it
 
-    qinfo->qtype = htons(query_type);
-    qinfo->qclass = htons(1);
+    qinfo->qtype = htons(query_type); //type of the query , A , MX , CNAME , NS etc
+    qinfo->qclass = htons(1); //its internet (lol)
 
     printf("\nSending Packet...");
-    if (sendto(s, (char*) buf, sizeof (dns_header) + (strlen((const char*) qname) + 1) + sizeof (dns_query), 0, (struct sockaddr*) &dest, sizeof (dest)) < 0)
+    if (sendto(s, (char*) buf, sizeof (struct DNS_HEADER) + (strlen((const char*) qname) + 1) + sizeof (struct QUESTION), 0, (struct sockaddr*) &dest, sizeof (dest)) < 0)
     {
         perror("sendto failed");
+        free(buf);
+        buf = NULL;
         return;
     }
     printf("Done");
 
-
+    //Receive the answer
     i = sizeof dest;
     printf("\nReceiving answer...");
     if (recvfrom(s, (char*) buf, BUFFER_SIZE, 0, (struct sockaddr*) &dest, (socklen_t*) & i) < 0)
     {
         perror("recvfrom failed");
+        free(buf);
+        buf = NULL;
         return;
     }
     printf("Done");
 
-    dns = (dns_header*) buf;
+    dns = (struct DNS_HEADER*) buf;
 
-
-    reader = &buf[sizeof (dns_header) + (strlen((const char*) qname) + 1) + sizeof (dns_query)];
+    //move ahead of the dns header and the query field
+    reader = &buf[sizeof (struct DNS_HEADER) + (strlen((const char*) qname) + 1) + sizeof (struct QUESTION)];
 
     printf("\nThe response contains : ");
     printf("\n %d Questions.", ntohs(dns->q_count));
@@ -154,7 +190,7 @@ resolveHostname(unsigned char *host, int query_type)
     printf("\n %d Authoritative Servers.", ntohs(dns->auth_count));
     printf("\n %d Additional records.\n\n", ntohs(dns->add_count));
 
-
+    //Start reading answers
     stop = 0;
 
     for (i = 0; i < ntohs(dns->ans_count); i++)
@@ -162,10 +198,10 @@ resolveHostname(unsigned char *host, int query_type)
         answers[i].name = decodeHostname(reader, buf, &stop);
         reader = reader + stop;
 
-        answers[i].resource = (dns_res_data*) (reader);
-        reader = reader + sizeof (dns_res_data);
+        answers[i].resource = (struct R_DATA*) (reader);
+        reader = reader + sizeof (struct R_DATA);
 
-        if (ntohs(answers[i].resource->type) == 1)
+        if (ntohs(answers[i].resource->type) == 1) //if its an ipv4 address
         {
             answers[i].rdata = (unsigned char*) malloc(ntohs(answers[i].resource->data_len));
 
@@ -185,27 +221,27 @@ resolveHostname(unsigned char *host, int query_type)
         }
     }
 
-
+    //read authorities
     for (i = 0; i < ntohs(dns->auth_count); i++)
     {
         auth[i].name = decodeHostname(reader, buf, &stop);
         reader += stop;
 
-        auth[i].resource = (dns_res_data*) (reader);
-        reader += sizeof (dns_res_data);
+        auth[i].resource = (struct R_DATA*) (reader);
+        reader += sizeof (struct R_DATA);
 
         auth[i].rdata = decodeHostname(reader, buf, &stop);
         reader += stop;
     }
 
-
+    //read additional
     for (i = 0; i < ntohs(dns->add_count); i++)
     {
         addit[i].name = decodeHostname(reader, buf, &stop);
         reader += stop;
 
-        addit[i].resource = (dns_res_data*) (reader);
-        reader += sizeof (dns_res_data);
+        addit[i].resource = (struct R_DATA*) (reader);
+        reader += sizeof (struct R_DATA);
 
         if (ntohs(addit[i].resource->type) == 1)
         {
@@ -223,23 +259,23 @@ resolveHostname(unsigned char *host, int query_type)
         }
     }
 
-
+    //print answers
     printf("\nAnswer Records : %d \n", ntohs(dns->ans_count));
     for (i = 0; i < ntohs(dns->ans_count); i++)
     {
         printf("Name : %s ", answers[i].name);
 
-        if (ntohs(answers[i].resource->type) == T_A)
+        if (ntohs(answers[i].resource->type) == T_A) //IPv4 address
         {
             long *p;
             p = (long*) answers[i].rdata;
-            a.sin_addr.s_addr = (*p);
+            a.sin_addr.s_addr = (*p); //working without ntohl
             printf("has IPv4 address : %s", inet_ntoa(a.sin_addr));
         }
 
         if (ntohs(answers[i].resource->type) == 5)
         {
-
+            //Canonical name for an alias
             printf("has alias name : %s", answers[i].rdata);
         }
 
@@ -248,7 +284,7 @@ resolveHostname(unsigned char *host, int query_type)
         printf("\n");
     }
 
-
+    //print authorities
     printf("\nAuthoritive Records : %d \n", ntohs(dns->auth_count));
     for (i = 0; i < ntohs(dns->auth_count); i++)
     {
@@ -263,7 +299,7 @@ resolveHostname(unsigned char *host, int query_type)
         printf("\n");
     }
 
-
+    //print additional resource records
     printf("\nAdditional Records : %d \n", ntohs(dns->add_count));
     for (i = 0; i < ntohs(dns->add_count); i++)
     {
@@ -280,7 +316,8 @@ resolveHostname(unsigned char *host, int query_type)
         printf("\n");
     }
 
-
+    free(buf);
+    buf = NULL;
 }
 
 unsigned char *
@@ -301,16 +338,20 @@ decodeHostname(unsigned char* reader, unsigned char* buffer, int* count)
     while (*reader != 0)
     {
         flag = *reader >> 6;
+        printf("Flag: %i\r\n", flag);
         if (flag == 3)
         {
             offset = (*reader)*256 + *(reader + 1) - 49152;
+            printf("    Offset: %i\r\n", offset);
             reader = buffer + offset;
             j = 1;
         }
         else if (flag == 0)
         {
             flag = *reader;
+            printf("    Len: %i\r\n", flag);
             memcpy(name + i, ++reader, flag);
+            printf("    String: %s\r\n", name + i);
             i += flag;
             name[i++] = '.';
             reader += flag;
@@ -389,7 +430,7 @@ encodeHostname(unsigned char* dns, unsigned char* host)
             {
                 *dns++ = host[lock];
             }
-            lock++;
+            lock++; //or lock=i+1;
         }
     }
     *dns++ = '\0';
