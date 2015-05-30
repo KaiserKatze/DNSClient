@@ -1,4 +1,6 @@
-
+/**
+ * @see http://www.ietf.org/rfc/rfc1035.txt
+ */
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -13,7 +15,10 @@
 #define BUFFER_SIZE 65536
 #define MSZ_NS      16
 
-static char dns_servers[16][MSZ_NS];
+typedef char ns_ip[16];
+
+static ns_ip dns_servers[MSZ_NS];
+static int n_dns_servers;
 static unsigned char * buf;
 
 
@@ -24,44 +29,11 @@ static unsigned char * buf;
 #define T_PTR 12
 #define T_MX 15
 
-void resolveHostname(unsigned char*, int);
-void encodeHostname(unsigned char*, unsigned char*);
+void resolveHostname(const unsigned char*, const int, const int);
+void encodeHostname(unsigned char*, const unsigned char*);
 unsigned char* decodeHostname(unsigned char*, unsigned char*, int*);
 void
 loadConf();
-
-inline static int
-send_dns_request(unsigned char *buf, int len, int protocol,
-        int sock, struct sockaddr_in dest)
-{
-    int res;
-
-    switch (protocol)
-    {
-        case IPPROTO_UDP:
-            res = sendto(sock, (char*) buf, len, 0,
-                    (struct sockaddr*) &dest,
-                    sizeof (struct sockaddr_in));
-            break;
-            /*
-        case IPPROTO_TCP:
-            res = connect(sock,
-                    (struct sockaddr *) &dest,
-                    sizeof (struct sockaddr_in));
-            if (res < 0)
-                return res;
-            res = htonl(len);
-            res = send(sock, &res, sizeof(int), 0);
-            if (res < 0)
-                return res;
-            res = send(sock, buf, len, 0);
-            break;
-            */
-        default:
-            return -1;
-    }
-    return res;
-}
 
 struct DNS_HEADER
 {
@@ -113,7 +85,7 @@ typedef struct
     struct QUESTION *ques;
 } QUERY;
 
-void
+static void
 handle_Interruption(int param)
 {
     printf("I'm dead thanks to [%i]!\r\n", param);
@@ -130,6 +102,8 @@ main(int argc, char *argv[])
 {
     unsigned char hostname[256];
 
+    loadConf();
+
     if (buf != NULL)
     {
         printf("There are already an running instance!\r\n");
@@ -140,30 +114,31 @@ main(int argc, char *argv[])
 
     printf("Enter Hostname to Lookup : ");
     scanf("%s", hostname);
-    loadConf();
 
-    resolveHostname(hostname, T_A);
+    resolveHostname(hostname, T_A, IPPROTO_UDP);
 
     return 0;
 }
 
 void
-resolveHostname(unsigned char *host, int query_type)
+resolveHostname(
+        const unsigned char *host,
+        const int query_type,
+        const int query_mode)
 {
+    socklen_t addrlen;
+
     unsigned char *qname, *reader;
     int i, j, stop, sock;
     int len;
+    unsigned short prefix;
     struct sockaddr_in a;
     struct RES_RECORD answers[20], auth[20], addit[20];
     struct sockaddr_in dest;
     struct DNS_HEADER *dns = NULL;
     struct QUESTION *qinfo = NULL;
     int ancount, nscount, arcount;
-    int type;
-    int protocol;
 
-    type = SOCK_DGRAM;
-    protocol = IPPROTO_UDP;
     printf("Allocating memory...\r\n");
     buf = (unsigned char *) malloc(BUFFER_SIZE);
     if (buf == NULL)
@@ -178,7 +153,6 @@ resolveHostname(unsigned char *host, int query_type)
         dns->rd = 1;
         dns->qdcount = htons(1);
         len = sizeof (struct DNS_HEADER);
-
         qname = (unsigned char*) (buf + len);
         encodeHostname(qname, host);
         len += (strlen((const char *) qname) + sizeof (unsigned char));
@@ -188,31 +162,87 @@ resolveHostname(unsigned char *host, int query_type)
         len += sizeof (struct QUESTION);
     }
 
-    sock = socket(AF_INET, type, protocol);
+    addrlen = sizeof (struct sockaddr_in);
+    sock = 0;
+    bzero(&dest, sizeof (dest));
     dest.sin_family = AF_INET;
     dest.sin_port = htons(53);
-    dest.sin_addr.s_addr = inet_addr(dns_servers[0]);
-    i = sizeof (struct sockaddr_in);
-
-    printf("Sending Packet...");
-    if (send_dns_request(buf, len, protocol, sock, dest) < 0)
+    i = 0;
+    dest.sin_addr.s_addr = inet_addr(dns_servers[i]);
+    switch (query_mode)
     {
-        perror("failed\r\n");
-        free(buf);
-        buf = NULL;
-        return;
+        case IPPROTO_UDP:
+        {
+            sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+            printf("Sending request...");
+            if (sendto(sock, (char*) buf, len, 0,
+                    (struct sockaddr*) &dest, addrlen) < 0)
+            {
+                printf("failed\r\n");
+                free(buf);
+                buf = NULL;
+                close(sock);
+                sock = 0;
+                return;
+            }
+            printf("done\r\nReceiving response...");
+            if (recvfrom(sock, (char*) buf, BUFFER_SIZE, 0,
+                    (struct sockaddr*) &dest, (socklen_t*) & addrlen) < 0)
+            {
+                printf("failed\r\n");
+                free(buf);
+                buf = NULL;
+                close(sock);
+                sock = 0;
+                return;
+            }
+            printf("done\r\n");
+            break;
+        }
+        case IPPROTO_TCP:
+        {
+            sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+            printf("Connect...");
+            if (connect(sock, (const struct sockaddr *) &dest, addrlen) < 0)
+            {
+                printf("failed\r\n");
+                free(buf);
+                buf = NULL;
+                close(sock);
+                sock = 0;
+                return;
+            }
+            printf("done\r\nSending request...");
+            prefix = htons(len & 0xffffu);
+            if (send(sock, &prefix, sizeof (unsigned short), 0) < 0
+                    || send(sock, buf, len, 0) < 0)
+            {
+                printf("failed\r\n");
+                free(buf); buf = NULL;
+                close(sock); sock = 0;
+                return;
+            }
+            printf("done\r\nReceiving response...");
+            prefix = 0;
+            if (recv(sock, &prefix, sizeof (unsigned short), 0) < 0
+                    || recv(sock, buf, BUFFER_SIZE, 0) < 0)
+            {
+                printf("failed\r\n");
+                free(buf); buf = NULL;
+                close(sock); sock = 0;
+                return;
+            }
+            printf("done\r\n");
+            prefix = ntohs(prefix);
+            break;
+        }
+        default:
+            free(buf);
+            buf = NULL;
+            return;
     }
-    printf("done\r\n");
-
-    printf("Receiving answer...");
-    if (recvfrom(sock, (char*) buf, BUFFER_SIZE, 0, (struct sockaddr*) &dest, (socklen_t*) & i) < 0)
-    {
-        perror("failed\r\n");
-        free(buf);
-        buf = NULL;
-        return;
-    }
-    printf("done\r\n");
+    close(sock);
+    sock = 0;
 
     dns = (struct DNS_HEADER*) buf;
     ancount = ntohs(dns->ancount);
@@ -312,7 +342,9 @@ resolveHostname(unsigned char *host, int query_type)
         }
 
         free(answers[i].name);
+        answers[i].name = NULL;
         free(answers[i].rdata);
+        answers[i].rdata = NULL;
         printf("\n");
     }
 
@@ -326,7 +358,9 @@ resolveHostname(unsigned char *host, int query_type)
             printf("has nameserver : %s", auth[i].rdata);
         }
         free(auth[i].name);
+        auth[i].name = NULL;
         free(auth[i].rdata);
+        auth[i].rdata = NULL;
         printf("\n");
     }
 
@@ -342,7 +376,9 @@ resolveHostname(unsigned char *host, int query_type)
             printf("has IPv4 address : %s", inet_ntoa(a.sin_addr));
         }
         free(addit[i].name);
+        addit[i].name = NULL;
         free(addit[i].rdata);
+        addit[i].rdata = NULL;
         printf("\n");
     }
 
@@ -410,15 +446,15 @@ loadConf()
 {
     FILE *file;
     char *line, *ip, *save;
-    int i, sz_line;
+    int sz_line;
 
-    i = 0;
-    if (i < MSZ_NS)
-        strcpy(dns_servers[i++], "8.8.8.8\0");
-    if (i < MSZ_NS)
-        strcpy(dns_servers[i++], "208.67.222.222\0");
-    if (i < MSZ_NS)
-        strcpy(dns_servers[i++], "208.67.220.220\0");
+    n_dns_servers = 0;
+    if (n_dns_servers < MSZ_NS)
+        strcpy(dns_servers[n_dns_servers++], "8.8.8.8\0");
+    if (n_dns_servers < MSZ_NS)
+        strcpy(dns_servers[n_dns_servers++], "208.67.222.222\0");
+    if (n_dns_servers < MSZ_NS)
+        strcpy(dns_servers[n_dns_servers++], "208.67.220.220\0");
 
     if ((file = fopen("/etc/resolv.conf", "r")) == NULL)
         return;
@@ -432,7 +468,8 @@ loadConf()
     }
 
     while (bzero(line, sz_line),
-            fgets(line, sz_line, file) != NULL && i < MSZ_NS)
+            fgets(line, sz_line, file) != NULL
+            && n_dns_servers < MSZ_NS)
     {
         if (line[0] == '#')
             continue;
@@ -440,7 +477,8 @@ loadConf()
         {
             strtok_r(line, " ", &save);
             ip = strtok_r(NULL, " ", &save);
-            strcpy(dns_servers[i++], ip);
+            printf("Load NS IP [%i]: %s\r\n", n_dns_servers, ip);
+            strcpy(dns_servers[n_dns_servers++], ip);
         }
     }
 
@@ -450,7 +488,7 @@ loadConf()
 }
 
 void
-encodeHostname(unsigned char* dns, unsigned char* host)
+encodeHostname(unsigned char* dns, const unsigned char* host)
 {
     int lock = 0, i;
     strcat((char*) host, ".");
