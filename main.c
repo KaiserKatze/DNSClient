@@ -29,8 +29,8 @@ static unsigned char * buf;
 #define T_PTR 12
 #define T_MX 15
 
-void resolveHostname(const unsigned char*, const int, const int);
-void encodeHostname(unsigned char*, const unsigned char*);
+void resolveHostname(unsigned char*, const int, const int);
+void encodeHostname(unsigned char*, unsigned char*);
 unsigned char* decodeHostname(unsigned char*, unsigned char*, int*);
 void
 loadConf();
@@ -121,8 +121,7 @@ main(int argc, char *argv[])
 }
 
 void
-resolveHostname(
-        const unsigned char *host,
+resolveHostname(unsigned char *host,
         const int query_type,
         const int query_mode)
 {
@@ -518,30 +517,30 @@ loadConf()
 }
 
 void
-encodeHostname(unsigned char* dns, const unsigned char* host)
+encodeHostname(unsigned char* dns, unsigned char* host)
 {
     char *dot;
     size_t len;
 
-    len = strlen(host);
-    dot = dns + 1;
-    memcpy(dot, host, len);
+    dot = host;
     while (1)
     {
-        dot = strchr(dns + 1, '.');
+        dot = strchr(dot, '.');
         if (dot == NULL)
         {
-            len = strlen(dns + 1);
-            //printf("Dot not found[%i:%.*s].\r\n", len, len, dns + 1);
+            len = strlen(host);
             *dns = (unsigned char) (len & 0xffu);
+            memcpy(dns, host, len);
             break;
         }
         else
         {
-            len = (int) dot - ((int) dns + 1);
-            //printf("Dot found    [%i:%.*s].\r\n", len, len, dns + 1);
+            len = (int) dot - (int) host;
             *dns++ = (unsigned char) (len & 0xffu);
-            dns += len;
+            memcpy(dns, host++, len);
         }
+        dns += len;
+        host += len;
+        dot = host;
     }
 }
