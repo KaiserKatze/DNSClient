@@ -31,9 +31,36 @@ void
 loadConf();
 
 inline static int
-send_dns_request(unsigned char *buf, int sock, struct sockaddr_in dest)
+send_dns_request(unsigned char *buf, int len, int protocol,
+        int sock, struct sockaddr_in dest)
 {
-    return 0;
+    int res;
+
+    switch (protocol)
+    {
+        case IPPROTO_UDP:
+            res = sendto(sock, (char*) buf, len, 0,
+                    (struct sockaddr*) &dest,
+                    sizeof (struct sockaddr_in));
+            break;
+            /*
+        case IPPROTO_TCP:
+            res = connect(sock,
+                    (struct sockaddr *) &dest,
+                    sizeof (struct sockaddr_in));
+            if (res < 0)
+                return res;
+            res = htonl(len);
+            res = send(sock, &res, sizeof(int), 0);
+            if (res < 0)
+                return res;
+            res = send(sock, buf, len, 0);
+            break;
+            */
+        default:
+            return -1;
+    }
+    return res;
 }
 
 struct DNS_HEADER
@@ -63,6 +90,7 @@ struct QUESTION
 };
 
 #pragma pack(push, 1)
+
 struct R_DATA
 {
     unsigned short type;
@@ -131,7 +159,11 @@ resolveHostname(unsigned char *host, int query_type)
     struct DNS_HEADER *dns = NULL;
     struct QUESTION *qinfo = NULL;
     int ancount, nscount, arcount;
+    int type;
+    int protocol;
 
+    type = SOCK_DGRAM;
+    protocol = IPPROTO_UDP;
     printf("Allocating memory...\r\n");
     buf = (unsigned char *) malloc(BUFFER_SIZE);
     if (buf == NULL)
@@ -156,15 +188,14 @@ resolveHostname(unsigned char *host, int query_type)
         len += sizeof (struct QUESTION);
     }
 
-    sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    sock = socket(AF_INET, type, protocol);
     dest.sin_family = AF_INET;
     dest.sin_port = htons(53);
     dest.sin_addr.s_addr = inet_addr(dns_servers[0]);
     i = sizeof (struct sockaddr_in);
 
     printf("Sending Packet...");
-    if (sendto(sock, (char*) buf, len,
-            0, (struct sockaddr*) &dest, sizeof (dest)) < 0)
+    if (send_dns_request(buf, len, protocol, sock, dest) < 0)
     {
         perror("failed\r\n");
         free(buf);
