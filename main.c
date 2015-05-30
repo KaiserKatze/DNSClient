@@ -245,6 +245,32 @@ resolveHostname(
     sock = 0;
 
     dns = (struct DNS_HEADER*) buf;
+    
+    switch (dns->rcode)
+    {
+        case 0:
+            printf("[RCODE 0] No error\r\n");
+            break;
+        case 1:
+            printf("[RCODE 1] Format error\r\n");
+            break;
+        case 2:
+            printf("[RCODE 2] Server failure\r\n");
+            break;
+        case 3:
+            printf("[RCODE 3] Name Error (aa=%i)\r\n", dns->aa);
+            break;
+        case 4:
+            printf("[RCODE 4] Not implemented\r\n");
+            break;
+        case 5:
+            printf("[RCODE 5] Refused\r\n");
+            break;
+        default:
+            printf("[RCODE %x] Unknown rcode\r\n", dns->rcode);
+            break;
+    }
+
     ancount = ntohs(dns->ancount);
     nscount = ntohs(dns->nscount);
     arcount = ntohs(dns->arcount);
