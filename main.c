@@ -26,7 +26,7 @@ int dns_server_count = 0;
 #define T_MX 15 //Mail server
 
 //Function Prototypes
-void ngethostbyname(unsigned char*, int);
+void resolveHostname(unsigned char*, int);
 void encodeHostname(unsigned char*, unsigned char*);
 unsigned char* decodeHostname(unsigned char*, unsigned char*, int*);
 void
@@ -106,78 +106,78 @@ main(int argc, char *argv[])
     scanf("%s", hostname);
 
     //Now get the ip of this hostname , A record
-    ngethostbyname(hostname, T_A);
+    resolveHostname(hostname, T_A);
 
     return 0;
 }
-
 
 /*
  * Perform a DNS query by sending a packet
  * */
 void
-ngethostbyname(unsigned char *host, int query_type)
+resolveHostname(unsigned char *host, int query_type)
 {
     unsigned char *buf, *qname, *reader;
-    int i, j, stop, s;
+    int i, j, stop, sock;
+    int len;
     struct sockaddr_in a;
-    struct RES_RECORD answers[20], auth[20], addit[20]; //the replies from the DNS server
+    struct RES_RECORD answers[20], auth[20], addit[20];
     struct sockaddr_in dest;
     struct DNS_HEADER *dns = NULL;
     struct QUESTION *qinfo = NULL;
-    
-    printf("Allocating memory...");
+
+    printf("Allocating memory...\r\n");
     buf = (unsigned char *) malloc(BUFFER_SIZE);
     if (buf == NULL)
         return;
     bzero(buf, BUFFER_SIZE);
 
-    printf("Resolving %s", host);
+    printf("Resolving %s\r\n", host);
 
-    s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP); //UDP packet for DNS queries
-
-    dest.sin_family = AF_INET;
-    dest.sin_port = htons(53);
-    dest.sin_addr.s_addr = inet_addr(dns_servers[0]); //dns servers
-
-    //Set the DNS structure to standard queries
     dns = (struct DNS_HEADER *) buf;
-    printf("\r\nPointers:  %p %p\r\n", &buf, buf);
 
     dns->id = htons((unsigned short) (0xffffu & getpid()));
     dns->rd = 1;
     dns->q_count = htons(1);
 
     //point to the query portion
-    qname = (unsigned char*) &buf[sizeof (struct DNS_HEADER)];
+    len = sizeof (struct DNS_HEADER);
+    qname = (unsigned char*) (buf + len);
 
     encodeHostname(qname, host);
-    qinfo = (struct QUESTION*) &buf[sizeof (struct DNS_HEADER) + (strlen((const char*) qname) + 1)]; //fill it
+    len += (strlen((const char *) qname) + sizeof (unsigned char));
+    qinfo = (struct QUESTION*) (buf + len); //fill it
 
     qinfo->qtype = htons(query_type); //type of the query , A , MX , CNAME , NS etc
     qinfo->qclass = htons(1); //its internet (lol)
+    len += sizeof (struct QUESTION);
 
-    printf("\nSending Packet...");
-    if (sendto(s, (char*) buf, sizeof (struct DNS_HEADER) + (strlen((const char*) qname) + 1) + sizeof (struct QUESTION), 0, (struct sockaddr*) &dest, sizeof (dest)) < 0)
+    sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    dest.sin_family = AF_INET;
+    dest.sin_port = htons(53);
+    dest.sin_addr.s_addr = inet_addr(dns_servers[0]);
+    i = sizeof (struct sockaddr_in);
+    
+    printf("Sending Packet...");
+    if (sendto(sock, (char*) buf, len,
+            0, (struct sockaddr*) &dest, sizeof (dest)) < 0)
     {
-        perror("sendto failed");
+        perror("failed\r\n");
         free(buf);
         buf = NULL;
         return;
     }
-    printf("Done");
+    printf("done\r\n");
 
-    //Receive the answer
-    i = sizeof dest;
-    printf("\nReceiving answer...");
-    if (recvfrom(s, (char*) buf, BUFFER_SIZE, 0, (struct sockaddr*) &dest, (socklen_t*) & i) < 0)
+    printf("Receiving answer...");
+    if (recvfrom(sock, (char*) buf, BUFFER_SIZE, 0, (struct sockaddr*) &dest, (socklen_t*) & i) < 0)
     {
-        perror("recvfrom failed");
+        perror("failed\r\n");
         free(buf);
         buf = NULL;
         return;
     }
-    printf("Done");
+    printf("done\r\n");
 
     dns = (struct DNS_HEADER*) buf;
 
@@ -316,6 +316,7 @@ ngethostbyname(unsigned char *host, int query_type)
         printf("\n");
     }
 
+    printf("Releasing memory...\r\n");
     free(buf);
     buf = NULL;
 }
@@ -338,20 +339,20 @@ decodeHostname(unsigned char* reader, unsigned char* buffer, int* count)
     while (*reader != 0)
     {
         flag = *reader >> 6;
-        printf("Flag: %i\r\n", flag);
+        //printf("Flag: %i\r\n", flag);
         if (flag == 3)
         {
             offset = (*reader)*256 + *(reader + 1) - 49152;
-            printf("    Offset: %i\r\n", offset);
+            //printf("    Offset: %i\r\n", offset);
             reader = buffer + offset;
             j = 1;
         }
         else if (flag == 0)
         {
             flag = *reader;
-            printf("    Len: %i\r\n", flag);
+            //printf("    Len: %i\r\n", flag);
             memcpy(name + i, ++reader, flag);
-            printf("    String: %s\r\n", name + i);
+            //printf("    String: %s\r\n", name + i);
             i += flag;
             name[i++] = '.';
             reader += flag;
