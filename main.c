@@ -154,7 +154,6 @@ resolveHostname(unsigned char *host,
         len = sizeof (struct DNS_HEADER);
         qname = (unsigned char*) (buf + len);
         encodeHostname(qname, host);
-        printf("Copied: '%s'\r\n", qname);
         len += (strlen((const char *) qname) + sizeof (unsigned char));
         qinfo = (struct QUESTION*) (buf + len);
         qinfo->qtype = htons(query_type);
@@ -530,7 +529,7 @@ encodeHostname(unsigned char* dns, unsigned char* host)
         if (dot == NULL)
         {
             len = strlen(host);
-            printf("Dot not found[%i:%.*s].\r\n", len, len, host);
+            //printf("Dot not found[%i:%.*s].\r\n", len, len, host);
             *dns++ = (unsigned char) (len & 0xffu);
             memcpy(dns, host, len);
             break;
@@ -538,7 +537,7 @@ encodeHostname(unsigned char* dns, unsigned char* host)
         else
         {
             len = (int) dot - (int) host;
-            printf("Dot found    [%i:%.*s].\r\n", len, len, host);
+            //printf("Dot found    [%i:%.*s].\r\n", len, len, host);
             *dns++ = (unsigned char) (len & 0xffu);
             memcpy(dns, host++, len);
         }
