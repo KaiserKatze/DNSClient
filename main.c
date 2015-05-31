@@ -32,21 +32,19 @@ void loadConf();
 int bufsize(int, void *);
 
 static int
-sendDNSRequest(int query_mode, int len)
+sendDNSRequest(int query_mode, int len, const char * dns_server)
 {
     socklen_t addrlen;
     unsigned short prefix;
     int sock;
     struct sockaddr_in dest;
-    int i;
 
     addrlen = sizeof (struct sockaddr_in);
     sock = 0;
     bzero(&dest, sizeof (dest));
     dest.sin_family = AF_INET;
     dest.sin_port = htons(53);
-    i = 0;
-    dest.sin_addr.s_addr = inet_addr(dns_servers[i]);
+    dest.sin_addr.s_addr = inet_addr(dns_server);
     switch (query_mode)
     {
         case IPPROTO_UDP:
@@ -273,7 +271,7 @@ resolveHostname(unsigned char *host,
         len += sizeof (struct QUESTION);
     }
     
-    sendDNSRequest(query_mode, len);
+    sendDNSRequest(query_mode, len, dns_servers[0]);
 
     dns = (struct DNS_HEADER*) buf;
 
