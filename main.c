@@ -7,14 +7,15 @@
 #include <string.h>
 #include <setjmp.h>
 #include <signal.h>
+#include <time.h>
 
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <unistd.h>
 
-// DNS TCP package size limit
-#define BUFFER_SIZE 65536
+#include "dns.h"
+
 #define MSZ_NS      16
 
 typedef char ns_ip[16];
@@ -23,22 +24,11 @@ static ns_ip dns_servers[MSZ_NS];
 static int n_dns_servers;
 static unsigned char * buf;
 
-
-#define T_A         1
-#define T_NS        2
-#define T_CNAME     5
-#define T_SOA       6
-#define T_PTR       12
-#define T_MX        15
-#define T_AAAA      28
-
 void resolveHostname(unsigned char*, const int, const int);
 void encodeHostname(unsigned char*, unsigned char*);
 unsigned char* decodeHostname(unsigned char*, unsigned char*, int*);
-void
-loadConf();
-int
-bufsize(int, void *);
+void loadConf();
+int bufsize(int, void *);
 
 struct DNS_HEADER
 {
@@ -121,7 +111,8 @@ main(int argc, char *argv[])
     printf("Enter Hostname to Lookup : ");
     scanf("%s", hostname);
 
-    resolveHostname(hostname, T_A, IPPROTO_UDP);
+    //resolveHostname(hostname, T_A, IPPROTO_UDP);
+    resolveHostname(hostname, T_A, IPPROTO_TCP);
 
     return 0;
 }
@@ -131,6 +122,7 @@ resolveHostname(unsigned char *host,
         const int query_type,
         const int query_mode)
 {
+    int bufSize;
     socklen_t addrlen;
 
     unsigned char *qname, *reader;
@@ -145,10 +137,21 @@ resolveHostname(unsigned char *host,
     int ancount, nscount, arcount;
 
     printf("Allocating memory...\r\n");
-    buf = (unsigned char *) malloc(BUFFER_SIZE);
+    switch (query_mode)
+    {
+        case IPPROTO_UDP:
+            bufSize = UDP_BUFFER_CAPACITY;
+            break;
+        case IPPROTO_TCP:
+            bufSize = TCP_BUFFER_CAPACITY;
+            break;
+        default:
+            return;
+    }
+    buf = (unsigned char *) malloc(bufSize);
     if (buf == NULL)
         return;
-    bzero(buf, BUFFER_SIZE);
+    bzero(buf, bufSize);
 
     printf("Resolving %s\r\n", host);
 
@@ -183,15 +186,16 @@ resolveHostname(unsigned char *host,
             if (sendto(sock, (char*) buf, len, 0,
                     (struct sockaddr*) &dest, addrlen) < 0)
             {
-                printf("failed\r\n");
+                printf("   failed\r\n");
                 free(buf);
                 buf = NULL;
                 close(sock);
                 sock = 0;
                 return;
             }
-            printf("done\r\nReceiving response...");
-            if (recvfrom(sock, (char*) buf, BUFFER_SIZE, 0,
+            printf("   done\r\nReceiving response...");
+            bzero(buf, bufSize);
+            if (recvfrom(sock, (char*) buf, bufSize, 0,
                     (struct sockaddr*) &dest, (socklen_t*) & addrlen) < 0)
             {
                 printf("failed\r\n");
@@ -210,7 +214,7 @@ resolveHostname(unsigned char *host,
             printf("Connect...");
             if (connect(sock, (const struct sockaddr *) &dest, addrlen) < 0)
             {
-                printf("failed\r\n");
+                printf("           failed\r\n");
                 free(buf);
                 buf = NULL;
                 close(sock);
@@ -222,7 +226,7 @@ resolveHostname(unsigned char *host,
             if (send(sock, &prefix, sizeof (unsigned short), 0) < 0
                     || send(sock, buf, len, 0) < 0)
             {
-                printf("failed\r\n");
+                printf("   failed\r\n");
                 free(buf);
                 buf = NULL;
                 close(sock);
@@ -231,8 +235,7 @@ resolveHostname(unsigned char *host,
             }
             printf("   done [0x%i]\r\nReceiving response...", len);
             prefix = 0;
-            if (recv(sock, &prefix, sizeof (unsigned short), 0) < 0
-                    || recv(sock, buf, BUFFER_SIZE, 0) < 0)
+            if (recv(sock, &prefix, sizeof (unsigned short), 0) < 0)
             {
                 printf("failed\r\n");
                 free(buf);
@@ -242,6 +245,16 @@ resolveHostname(unsigned char *host,
                 return;
             }
             prefix = ntohs(prefix);
+            bzero(buf, prefix + 1);
+            if (recv(sock, buf, prefix, 0) < 0)
+            {
+                printf("failed\r\n");
+                free(buf);
+                buf = NULL;
+                close(sock);
+                sock = 0;
+                return;
+            }
             printf("done [0x%x].\r\n", prefix);
             break;
         }
@@ -255,6 +268,10 @@ resolveHostname(unsigned char *host,
 
     dns = (struct DNS_HEADER*) buf;
 
+    printf("[AA    %i]\r\n"
+           "[RA    %i]\r\n"
+           "[TC    %i]\r\n",
+           dns->aa, dns->ra, dns->tc);
     switch (dns->rcode)
     {
         case 0:
@@ -382,10 +399,10 @@ resolveHostname(unsigned char *host,
         answers[i].name = NULL;
         free(answers[i].rdata);
         answers[i].rdata = NULL;
-        printf("\n\n");
+        printf("\n");
     }
 
-    printf("Authoritive Records : %d \n", nscount);
+    printf("\nAuthoritive Records : %d \n", nscount);
     for (i = 0; i < nscount; i++)
     {
 
@@ -400,10 +417,10 @@ resolveHostname(unsigned char *host,
         auth[i].name = NULL;
         free(auth[i].rdata);
         auth[i].rdata = NULL;
-        printf("\n\n");
+        printf("\n");
     }
 
-    printf("Additional Records : %d \n", arcount);
+    printf("\nAdditional Records : %d \n", arcount);
     for (i = 0; i < arcount; i++)
     {
         printf("Name : %s ", addit[i].name);
@@ -518,7 +535,7 @@ loadConf()
         {
             strtok_r(line, " ", &save);
             ip = strtok_r(NULL, " ", &save);
-            printf("Load NS IP [%i]: %s\r\n", n_dns_servers, ip);
+            printf("Load NS IP [%i]: %s\n", n_dns_servers, ip);
             strcpy(dns_servers[n_dns_servers++], ip);
         }
     }
