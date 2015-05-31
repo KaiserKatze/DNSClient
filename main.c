@@ -24,12 +24,13 @@ static int n_dns_servers;
 static unsigned char * buf;
 
 
-#define T_A 1
-#define T_NS 2
-#define T_CNAME 5
-#define T_SOA 6
-#define T_PTR 12
-#define T_MX 15
+#define T_A         1
+#define T_NS        2
+#define T_CNAME     5
+#define T_SOA       6
+#define T_PTR       12
+#define T_MX        15
+#define T_AAAA      28
 
 void resolveHostname(unsigned char*, const int, const int);
 void encodeHostname(unsigned char*, unsigned char*);
@@ -301,7 +302,7 @@ resolveHostname(unsigned char *host,
         answers[i].resource = (struct R_DATA*) (reader);
         reader = reader + sizeof (struct R_DATA);
 
-        if (ntohs(answers[i].resource->type) == 1) //if its an ipv4 address
+        if (ntohs(answers[i].resource->type) == T_A) //if its an ipv4 address
         {
             answers[i].rdata = (unsigned char*) malloc(ntohs(answers[i].resource->data_len));
 
@@ -341,9 +342,10 @@ resolveHostname(unsigned char *host,
         addit[i].resource = (struct R_DATA*) (reader);
         reader += sizeof (struct R_DATA);
 
-        if (ntohs(addit[i].resource->type) == 1)
+        if (ntohs(addit[i].resource->type) == T_A)
         {
-            addit[i].rdata = (unsigned char*) malloc(ntohs(addit[i].resource->data_len));
+            addit[i].rdata = (unsigned char*)
+                    malloc(ntohs(addit[i].resource->data_len));
             for (j = 0; j < ntohs(addit[i].resource->data_len); j++)
                 addit[i].rdata[j] = reader[j];
 
@@ -374,15 +376,16 @@ resolveHostname(unsigned char *host,
         {
             printf("has alias name : %s", answers[i].rdata);
         }
+        printf("{TTL=%i}", answers[i].resource->ttl);
 
         free(answers[i].name);
         answers[i].name = NULL;
         free(answers[i].rdata);
         answers[i].rdata = NULL;
-        printf("\n");
+        printf("\n\n");
     }
 
-    printf("\nAuthoritive Records : %d \n", nscount);
+    printf("Authoritive Records : %d \n", nscount);
     for (i = 0; i < nscount; i++)
     {
 
@@ -391,14 +394,16 @@ resolveHostname(unsigned char *host,
         {
             printf("has nameserver : %s", auth[i].rdata);
         }
+        printf("{TTL=%i}", auth[i].resource->ttl);
+
         free(auth[i].name);
         auth[i].name = NULL;
         free(auth[i].rdata);
         auth[i].rdata = NULL;
-        printf("\n");
+        printf("\n\n");
     }
 
-    printf("\nAdditional Records : %d \n", arcount);
+    printf("Additional Records : %d \n", arcount);
     for (i = 0; i < arcount; i++)
     {
         printf("Name : %s ", addit[i].name);
@@ -409,11 +414,13 @@ resolveHostname(unsigned char *host,
             a.sin_addr.s_addr = (*p);
             printf("has IPv4 address : %s", inet_ntoa(a.sin_addr));
         }
+        printf("{TTL=%i}", addit[i].resource->ttl);
+
         free(addit[i].name);
         addit[i].name = NULL;
         free(addit[i].rdata);
         addit[i].rdata = NULL;
-        printf("\n");
+        printf("\n\n");
     }
 
     printf("Releasing memory...\r\n");
