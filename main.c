@@ -3,6 +3,7 @@
  */
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <string.h>
 #include <setjmp.h>
 #include <signal.h>
@@ -12,6 +13,7 @@
 #include <netinet/in.h>
 #include <unistd.h>
 
+// DNS TCP package size limit
 #define BUFFER_SIZE 65536
 #define MSZ_NS      16
 
@@ -34,6 +36,8 @@ void encodeHostname(unsigned char*, unsigned char*);
 unsigned char* decodeHostname(unsigned char*, unsigned char*, int*);
 void
 loadConf();
+int
+bufsize(int, void *);
 
 struct DNS_HEADER
 {
@@ -112,6 +116,7 @@ main(int argc, char *argv[])
     buf = (unsigned char *) NULL;
     signal(SIGINT, handle_Interruption);
 
+    bzero(hostname, 256);
     printf("Enter Hostname to Lookup : ");
     scanf("%s", hostname);
 
@@ -211,7 +216,7 @@ resolveHostname(unsigned char *host,
                 sock = 0;
                 return;
             }
-            printf("done\r\nSending request...");
+            printf("           done\r\nSending request...");
             prefix = htons(len & 0xffffu);
             if (send(sock, &prefix, sizeof (unsigned short), 0) < 0
                     || send(sock, buf, len, 0) < 0)
@@ -223,7 +228,7 @@ resolveHostname(unsigned char *host,
                 sock = 0;
                 return;
             }
-            printf("done\r\nReceiving response...");
+            printf("   done [0x%i]\r\nReceiving response...", len);
             prefix = 0;
             if (recv(sock, &prefix, sizeof (unsigned short), 0) < 0
                     || recv(sock, buf, BUFFER_SIZE, 0) < 0)
@@ -235,8 +240,8 @@ resolveHostname(unsigned char *host,
                 sock = 0;
                 return;
             }
-            printf("done\r\n");
             prefix = ntohs(prefix);
+            printf("done [0x%x].\r\n", prefix);
             break;
         }
         default:
@@ -545,4 +550,98 @@ encodeHostname(unsigned char* dns, unsigned char* host)
         host += len;
         dot = host;
     }
+}
+
+int
+bufsize(int cap, void * buf)
+{
+    int i;
+    uint64_t *l;
+    uint32_t *m;
+    uint16_t *n;
+    uint8_t *o;
+
+    for (i = cap; i != 0;)
+    {
+        i -= sizeof (uint64_t) / sizeof (char);
+        //printf("Exam buffer @ %i...\r\n", i);
+        if (i < 0)
+        {
+            i = 0;
+        }
+        l = (uint64_t *) (buf + i);
+        if (*l != 0)
+            break;
+        //printf("Buffer @ %i is empty.\r\n", i);
+    }
+
+    if (*l == 0)
+        return 0;
+
+    m = &((uint32_t *) l)[1];
+    if (*m != 0)
+    {
+        n = &((uint16_t *) m)[1];
+        if (*n != 0)
+        {
+            o = &((uint8_t *) n)[1];
+            if (*o != 0)
+            {
+                return (int) o - (int) buf + 1;
+            }
+            o = (uint8_t *) n;
+            if (*o != 0)
+            {
+                return (int) o - (int) buf + 1;
+            }
+        }
+        n = (uint16_t *) m;
+        if (*n != 0)
+        {
+            o = &((uint8_t *) n)[1];
+            if (*o != 0)
+            {
+                return (int) o - (int) buf + 1;
+            }
+            o = (uint8_t *) n;
+            if (*o != 0)
+            {
+                return (int) o - (int) buf + 1;
+            }
+        }
+    }
+    m = (uint32_t *) l;
+    if (*m != 0)
+    {
+        n = &((uint16_t *) m)[1];
+        if (*n != 0)
+        {
+            o = &((uint8_t *) n)[1];
+            if (*o != 0)
+            {
+                return (int) o - (int) buf + 1;
+            }
+            o = (uint8_t *) n;
+            if (*o != 0)
+            {
+                return (int) o - (int) buf + 1;
+            }
+        }
+        n = (uint16_t *) m;
+        if (*n != 0)
+        {
+            o = &((uint8_t *) n)[1];
+            if (*o != 0)
+            {
+                return (int) o - (int) buf + 1;
+            }
+            o = (uint8_t *) n;
+            if (*o != 0)
+            {
+                return (int) o - (int) buf + 1;
+            }
+        }
+    }
+
+    return 0;
 }
