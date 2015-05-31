@@ -495,6 +495,9 @@ decodeHostname(unsigned char* reader, unsigned char* buffer, int* count)
         ++*count;
 
     name[i - 1] = '\0';
+    reader = realloc(name, i);
+    if (reader != NULL)
+        name = reader;
 
     return name;
 }
