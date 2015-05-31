@@ -23,12 +23,120 @@ typedef char ns_ip[16];
 static ns_ip dns_servers[MSZ_NS];
 static int n_dns_servers;
 static unsigned char * buf;
+static int bufSize;
 
 void resolveHostname(unsigned char*, const int, const int);
 void encodeHostname(unsigned char*, unsigned char*);
 unsigned char* decodeHostname(unsigned char*, unsigned char*, int*);
 void loadConf();
 int bufsize(int, void *);
+
+static int
+sendDNSRequest(int query_mode, int len)
+{
+    socklen_t addrlen;
+    unsigned short prefix;
+    int sock;
+    struct sockaddr_in dest;
+    int i;
+
+    addrlen = sizeof (struct sockaddr_in);
+    sock = 0;
+    bzero(&dest, sizeof (dest));
+    dest.sin_family = AF_INET;
+    dest.sin_port = htons(53);
+    i = 0;
+    dest.sin_addr.s_addr = inet_addr(dns_servers[i]);
+    switch (query_mode)
+    {
+        case IPPROTO_UDP:
+        {
+            sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+            printf("Sending request...");
+            if (sendto(sock, (char*) buf, len, 0,
+                    (struct sockaddr*) &dest, addrlen) < 0)
+            {
+                printf("   failed\r\n");
+                free(buf);
+                buf = NULL;
+                close(sock);
+                sock = 0;
+                return -1;
+            }
+            printf("   done\r\nReceiving response...");
+            bzero(buf, bufSize);
+            if (recvfrom(sock, (char*) buf, bufSize, 0,
+                    (struct sockaddr*) &dest, (socklen_t*) & addrlen) < 0)
+            {
+                printf("failed\r\n");
+                free(buf);
+                buf = NULL;
+                close(sock);
+                sock = 0;
+                return -1;
+            }
+            printf("done\r\n");
+            break;
+        }
+        case IPPROTO_TCP:
+        {
+            sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+            printf("Connect...");
+            if (connect(sock, (const struct sockaddr *) &dest, addrlen) < 0)
+            {
+                printf("           failed\r\n");
+                free(buf);
+                buf = NULL;
+                close(sock);
+                sock = 0;
+                return -1;
+            }
+            printf("           done\r\nSending request...");
+            prefix = htons(len & 0xffffu);
+            if (send(sock, &prefix, sizeof (unsigned short), 0) < 0
+                    || send(sock, buf, len, 0) < 0)
+            {
+                printf("   failed\r\n");
+                free(buf);
+                buf = NULL;
+                close(sock);
+                sock = 0;
+                return -1;
+            }
+            printf("   done [0x%i]\r\nReceiving response...", len);
+            prefix = 0;
+            if (recv(sock, &prefix, sizeof (unsigned short), 0) < 0)
+            {
+                printf("failed\r\n");
+                free(buf);
+                buf = NULL;
+                close(sock);
+                sock = 0;
+                return -1;
+            }
+            prefix = ntohs(prefix);
+            bzero(buf, prefix + 1);
+            if (recv(sock, buf, prefix, 0) < 0)
+            {
+                printf("failed\r\n");
+                free(buf);
+                buf = NULL;
+                close(sock);
+                sock = 0;
+                return -1;
+            }
+            printf("done [0x%x].\r\n", prefix);
+            break;
+        }
+        default:
+            free(buf);
+            buf = NULL;
+            return -1;
+    }
+    close(sock);
+    sock = 0;
+    return 0;
+}
 
 struct DNS_HEADER
 {
@@ -122,16 +230,11 @@ resolveHostname(unsigned char *host,
         const int query_type,
         const int query_mode)
 {
-    int bufSize;
-    socklen_t addrlen;
-
     unsigned char *qname, *reader;
-    int i, j, stop, sock;
+    int i, j, stop;
     int len;
-    unsigned short prefix;
     struct sockaddr_in a;
     struct RES_RECORD answers[20], auth[20], addit[20];
-    struct sockaddr_in dest;
     struct DNS_HEADER *dns = NULL;
     struct QUESTION *qinfo = NULL;
     int ancount, nscount, arcount;
@@ -169,109 +272,15 @@ resolveHostname(unsigned char *host,
         qinfo->qclass = htons(1);
         len += sizeof (struct QUESTION);
     }
-
-    addrlen = sizeof (struct sockaddr_in);
-    sock = 0;
-    bzero(&dest, sizeof (dest));
-    dest.sin_family = AF_INET;
-    dest.sin_port = htons(53);
-    i = 0;
-    dest.sin_addr.s_addr = inet_addr(dns_servers[i]);
-    switch (query_mode)
-    {
-        case IPPROTO_UDP:
-        {
-            sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-            printf("Sending request...");
-            if (sendto(sock, (char*) buf, len, 0,
-                    (struct sockaddr*) &dest, addrlen) < 0)
-            {
-                printf("   failed\r\n");
-                free(buf);
-                buf = NULL;
-                close(sock);
-                sock = 0;
-                return;
-            }
-            printf("   done\r\nReceiving response...");
-            bzero(buf, bufSize);
-            if (recvfrom(sock, (char*) buf, bufSize, 0,
-                    (struct sockaddr*) &dest, (socklen_t*) & addrlen) < 0)
-            {
-                printf("failed\r\n");
-                free(buf);
-                buf = NULL;
-                close(sock);
-                sock = 0;
-                return;
-            }
-            printf("done\r\n");
-            break;
-        }
-        case IPPROTO_TCP:
-        {
-            sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-            printf("Connect...");
-            if (connect(sock, (const struct sockaddr *) &dest, addrlen) < 0)
-            {
-                printf("           failed\r\n");
-                free(buf);
-                buf = NULL;
-                close(sock);
-                sock = 0;
-                return;
-            }
-            printf("           done\r\nSending request...");
-            prefix = htons(len & 0xffffu);
-            if (send(sock, &prefix, sizeof (unsigned short), 0) < 0
-                    || send(sock, buf, len, 0) < 0)
-            {
-                printf("   failed\r\n");
-                free(buf);
-                buf = NULL;
-                close(sock);
-                sock = 0;
-                return;
-            }
-            printf("   done [0x%i]\r\nReceiving response...", len);
-            prefix = 0;
-            if (recv(sock, &prefix, sizeof (unsigned short), 0) < 0)
-            {
-                printf("failed\r\n");
-                free(buf);
-                buf = NULL;
-                close(sock);
-                sock = 0;
-                return;
-            }
-            prefix = ntohs(prefix);
-            bzero(buf, prefix + 1);
-            if (recv(sock, buf, prefix, 0) < 0)
-            {
-                printf("failed\r\n");
-                free(buf);
-                buf = NULL;
-                close(sock);
-                sock = 0;
-                return;
-            }
-            printf("done [0x%x].\r\n", prefix);
-            break;
-        }
-        default:
-            free(buf);
-            buf = NULL;
-            return;
-    }
-    close(sock);
-    sock = 0;
+    
+    sendDNSRequest(query_mode, len);
 
     dns = (struct DNS_HEADER*) buf;
 
     printf("[AA    %i]\r\n"
-           "[RA    %i]\r\n"
-           "[TC    %i]\r\n",
-           dns->aa, dns->ra, dns->tc);
+            "[RA    %i]\r\n"
+            "[TC    %i]\r\n",
+            dns->aa, dns->ra, dns->tc);
     switch (dns->rcode)
     {
         case 0:
