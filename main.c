@@ -16,7 +16,8 @@
 
 #include "dns.h"
 
-#define MSZ_NS      16
+#define MSZ_NS          16
+#define ENABLE_HOSTS    0
 
 typedef char ns_ip[16];
 
@@ -28,8 +29,39 @@ static int bufSize;
 void resolveHostname(unsigned char*, const int, const int);
 void encodeHostname(unsigned char*, unsigned char*);
 unsigned char* decodeHostname(unsigned char*, unsigned char*, int*);
-void loadConf();
+int loadConf();
 int bufsize(int, void *);
+
+#if ENABLE_HOSTS
+static char *
+strtokr(char *s, const char *delim, char **save_ptr)
+{
+    char *token;
+
+    if (s == NULL)
+        s = *save_ptr;
+
+    /* Scan leading delimiters.  */
+    s += strspn(s, delim);
+    if (*s == '\0')
+        return NULL;
+
+    /* Find the end of the token.  */
+    token = s;
+    s = strpbrk(token, delim);
+    if (s == NULL)
+        /* This token finishes the string.  */
+        *save_ptr = strchr(token, '\0');
+    else
+    {
+        /* Terminate the token and make *SAVE_PTR point past it.  */
+        *s = '\0';
+        *save_ptr = s + 1;
+    }
+
+    return token;
+}
+#endif
 
 static int
 sendDNSRequest(int query_mode, int len, const char * dns_server)
@@ -509,13 +541,14 @@ decodeHostname(unsigned char* reader, unsigned char* buffer, int* count)
     return name;
 }
 
-void
+int
 loadConf()
 {
     FILE *file;
-    char *line, *ip, *save;
+    char *line, *ip, *save, *name;
     int sz_line;
 
+    ip = save = name = (char *) NULL;
     n_dns_servers = 0;
     if (n_dns_servers < MSZ_NS)
         strcpy(dns_servers[n_dns_servers++], "8.8.8.8\0");
@@ -525,14 +558,14 @@ loadConf()
         strcpy(dns_servers[n_dns_servers++], "208.67.220.220\0");
 
     if ((file = fopen("/etc/resolv.conf", "r")) == NULL)
-        return;
+        return -1;
 
     sz_line = 128;
     line = (char *) malloc(sz_line);
     if (line == NULL)
     {
         fclose(file);
-        return;
+        return -2;
     }
 
     while (bzero(line, sz_line),
@@ -543,8 +576,8 @@ loadConf()
             continue;
         if (strncmp(line, "nameserver", 10) == 0)
         {
-            strtok_r(line, " ", &save);
-            ip = strtok_r(NULL, " ", &save);
+            strtokr(line, " ", &save);
+            ip = strtokr(NULL, " ", &save);
             printf("Load NS IP [%i]: %s\n", n_dns_servers, ip);
             strcpy(dns_servers[n_dns_servers++], ip);
         }
@@ -553,6 +586,37 @@ loadConf()
     free(line);
     line = (char *) NULL;
     fclose(file);
+#if ENABLE_HOSTS
+    if ((file = fopen("/etc/hosts", "r")) == NULL)
+        return -1;
+    sz_line = 512;
+    line = (char *) malloc(sz_line);
+    if (line == NULL)
+    {
+        fclose(file);
+        return -2;
+    }
+    
+    printf("Reading /etc/hosts ...\r\n");
+    while (bzero(line, sz_line),
+            fgets(line, sz_line, file) != NULL)
+    {
+        if (line[0] == '#')
+            break;
+        printf("Parsing the line %s", line);
+        ip = name = save = NULL;
+        ip = strtokr(line, " ", &save);
+        name = strtokr(NULL, " ", &save);
+        if (ip != NULL && name != NULL)
+            printf("{Name:'%s',IP:'%s'}\r\n", name, ip);
+        else
+            printf ("Fail to parse the line.\r\n");
+    }
+    fclose(file);
+    free(line);
+    line = (char *) NULL;
+#endif
+    return 0;
 }
 
 void
