@@ -15,6 +15,7 @@
 #include <unistd.h>
 
 #include "dns.h"
+#include "record.h"
 
 #define MSZ_NS          16
 #define ENABLE_HOSTS    0
@@ -26,42 +27,12 @@ static int n_dns_servers;
 static unsigned char * buf;
 static int bufSize;
 
+static char * strtokr(char *, const char *, char **);
 void resolveHostname(unsigned char*, const int, const int);
 void encodeHostname(unsigned char*, unsigned char*);
 unsigned char* decodeHostname(unsigned char*, unsigned char*, int*);
 int loadConf();
 int bufsize(int, void *);
-
-#if ENABLE_HOSTS
-static char *
-strtokr(char *s, const char *delim, char **save_ptr)
-{
-    char *token;
-
-    if (s == NULL)
-        s = *save_ptr;
-
-    /* Scan leading delimiters.  */
-    s += strspn(s, delim);
-    if (*s == '\0')
-        return NULL;
-
-    /* Find the end of the token.  */
-    token = s;
-    s = strpbrk(token, delim);
-    if (s == NULL)
-        /* This token finishes the string.  */
-        *save_ptr = strchr(token, '\0');
-    else
-    {
-        /* Terminate the token and make *SAVE_PTR point past it.  */
-        *s = '\0';
-        *save_ptr = s + 1;
-    }
-
-    return token;
-}
-#endif
 
 static int
 sendDNSRequest(int query_mode, int len, const char * dns_server)
@@ -236,7 +207,7 @@ main(int argc, char *argv[])
     unsigned char hostname[256];
 
     loadConf();
-
+    //*
     if (buf != NULL)
     {
         printf("There are already an running instance!\r\n");
@@ -251,7 +222,7 @@ main(int argc, char *argv[])
 
     //resolveHostname(hostname, T_A, IPPROTO_UDP);
     resolveHostname(hostname, T_A, IPPROTO_TCP);
-
+    //*/
     return 0;
 }
 
@@ -302,7 +273,7 @@ resolveHostname(unsigned char *host,
         qinfo->qclass = htons(1);
         len += sizeof (struct QUESTION);
     }
-    
+
     sendDNSRequest(query_mode, len, dns_servers[0]);
 
     dns = (struct DNS_HEADER*) buf;
@@ -428,7 +399,7 @@ resolveHostname(unsigned char *host,
             printf("has IPv4 address : %s", inet_ntoa(a.sin_addr));
         }
 
-        if (ntohs(answers[i].resource->type) == 5)
+        if (ntohs(answers[i].resource->type) == T_CNAME)
         {
             printf("has alias name : %s", answers[i].rdata);
         }
@@ -576,9 +547,9 @@ loadConf()
             continue;
         if (strncmp(line, "nameserver", 10) == 0)
         {
-            strtokr(line, " ", &save);
-            ip = strtokr(NULL, " ", &save);
-            printf("Load NS IP [%i]: %s\n", n_dns_servers, ip);
+            strtokr(line, " \r\n", &save);
+            ip = strtokr(NULL, " \r\n", &save);
+            printf("Load NS IP [%i]: %s\r\n", n_dns_servers, ip);
             strcpy(dns_servers[n_dns_servers++], ip);
         }
     }
@@ -596,21 +567,23 @@ loadConf()
         fclose(file);
         return -2;
     }
-    
+
     printf("Reading /etc/hosts ...\r\n");
+    // TODO
     while (bzero(line, sz_line),
             fgets(line, sz_line, file) != NULL)
     {
-        if (line[0] == '#')
+        if (line[0] == '#' || line[0] == '\r'
+                || line[0] == '\n')
             break;
-        printf("Parsing the line %s", line);
+        printf("Parsing the line <%i>%s", strlen(line), line);
         ip = name = save = NULL;
-        ip = strtokr(line, " ", &save);
-        name = strtokr(NULL, " ", &save);
-        if (ip != NULL && name != NULL)
-            printf("{Name:'%s',IP:'%s'}\r\n", name, ip);
-        else
-            printf ("Fail to parse the line.\r\n");
+        ip = strtokr(line, "\t\r\n", &save);
+        name = strtokr(NULL, "\t\r\n", &save);
+        if (!ip || !name)
+            continue;
+        printf("{Name:'%s',IP:'%s',Hash:'%x'}\r\n",
+                name, ip, hashCode(strlen(name), name));
     }
     fclose(file);
     free(line);
@@ -742,4 +715,33 @@ bufsize(int cap, void * buf)
     }
 
     return 0;
+}
+
+static char *
+strtokr(char *s, const char *delim, char **save_ptr)
+{
+    char *token;
+
+    if (s == NULL)
+        s = *save_ptr;
+
+    /* Scan leading delimiters.  */
+    s += strspn(s, delim);
+    if (*s == '\0')
+        return NULL;
+
+    /* Find the end of the token.  */
+    token = s;
+    s = strpbrk(token, delim);
+    if (s == NULL)
+        /* This token finishes the string.  */
+        *save_ptr = strchr(token, '\0');
+    else
+    {
+        /* Terminate the token and make *SAVE_PTR point past it.  */
+        *s = '\0';
+        *save_ptr = s + 1;
+    }
+
+    return token;
 }
