@@ -236,6 +236,7 @@ resolveHostname(unsigned char *host,
     int len;
     struct sockaddr_in a;
     struct RES_RECORD answers[20], auth[20], addit[20];
+    struct RES_RECORD record;
     struct DNS_HEADER *dns = NULL;
     struct QUESTION *qinfo = NULL;
     int ancount, nscount, arcount;
@@ -321,132 +322,127 @@ resolveHostname(unsigned char *host,
 
     stop = 0;
 
-    for (i = 0; i < ancount; i++)
-    {
-        answers[i].name = decodeHostname(reader, buf, &stop);
-        reader = reader + stop;
-
-        answers[i].resource = (struct R_DATA*) (reader);
-        reader = reader + sizeof (struct R_DATA);
-
-        if (ntohs(answers[i].resource->type) == T_A) //if its an ipv4 address
-        {
-            answers[i].rdata = (unsigned char*) malloc(ntohs(answers[i].resource->data_len));
-
-            for (j = 0; j < ntohs(answers[i].resource->data_len); j++)
-            {
-                answers[i].rdata[j] = reader[j];
-            }
-
-            answers[i].rdata[ntohs(answers[i].resource->data_len)] = '\0';
-
-            reader = reader + ntohs(answers[i].resource->data_len);
-        }
-        else
-        {
-            answers[i].rdata = decodeHostname(reader, buf, &stop);
-            reader = reader + stop;
-        }
-    }
-
-    for (i = 0; i < nscount; i++)
-    {
-        auth[i].name = decodeHostname(reader, buf, &stop);
-        reader += stop;
-
-        auth[i].resource = (struct R_DATA*) (reader);
-        reader += sizeof (struct R_DATA);
-
-        auth[i].rdata = decodeHostname(reader, buf, &stop);
-        reader += stop;
-    }
-
-    for (i = 0; i < arcount; i++)
-    {
-        addit[i].name = decodeHostname(reader, buf, &stop);
-        reader += stop;
-
-        addit[i].resource = (struct R_DATA*) (reader);
-        reader += sizeof (struct R_DATA);
-
-        if (ntohs(addit[i].resource->type) == T_A)
-        {
-            addit[i].rdata = (unsigned char*)
-                    malloc(ntohs(addit[i].resource->data_len));
-            for (j = 0; j < ntohs(addit[i].resource->data_len); j++)
-                addit[i].rdata[j] = reader[j];
-
-            addit[i].rdata[ntohs(addit[i].resource->data_len)] = '\0';
-            reader += ntohs(addit[i].resource->data_len);
-        }
-        else
-        {
-            addit[i].rdata = decodeHostname(reader, buf, &stop);
-            reader += stop;
-        }
-    }
-
     printf("\nAnswer Records : %d \n", ancount);
     for (i = 0; i < ancount; i++)
     {
-        printf("Name : %s ", answers[i].name);
+        record.name = decodeHostname(reader, buf, &stop);
+        reader = reader + stop;
 
-        if (ntohs(answers[i].resource->type) == T_A)
+        record.resource = (struct R_DATA*) (reader);
+        reader = reader + sizeof (struct R_DATA);
+
+        if (ntohs(record.resource->type) == T_A) //if its an ipv4 address
         {
-            long *p;
-            p = (long*) answers[i].rdata;
-            a.sin_addr.s_addr = (*p);
-            printf("has IPv4 address : %s", inet_ntoa(a.sin_addr));
+            record.rdata = (unsigned char*) malloc(ntohs(record.resource->data_len));
+
+            for (j = 0; j < ntohs(record.resource->data_len); j++)
+            {
+                record.rdata[j] = reader[j];
+            }
+
+            record.rdata[ntohs(record.resource->data_len)] = '\0';
+
+            reader = reader + ntohs(record.resource->data_len);
+        }
+        else
+        {
+            record.rdata = decodeHostname(reader, buf, &stop);
+            reader = reader + stop;
         }
 
-        if (ntohs(answers[i].resource->type) == T_CNAME)
-        {
-            printf("has alias name : %s", answers[i].rdata);
-        }
-        printf("{TTL=%i}", answers[i].resource->ttl);
+        printf("Name : %s ", record.name);
+        free(record.name);
+        record.name = NULL;
 
-        free(answers[i].name);
-        answers[i].name = NULL;
-        free(answers[i].rdata);
-        answers[i].rdata = NULL;
+        switch (ntohs(record.resource->type))
+        {
+            case T_A:
+            {
+                long *p;
+                p = (long*) record.rdata;
+                a.sin_addr.s_addr = (*p);
+                printf("has IPv4 address : %s", inet_ntoa(a.sin_addr));
+                break;
+            }
+            case T_CNAME:
+                printf("has alias name : %s", record.rdata);
+                break;
+            default:
+                break;
+        }
+        printf("{TTL=%i}", record.resource->ttl);
+        free(record.rdata);
+        record.rdata = NULL;
         printf("\n");
     }
+
 
     printf("\nAuthoritive Records : %d \n", nscount);
     for (i = 0; i < nscount; i++)
     {
+        record.name = decodeHostname(reader, buf, &stop);
+        reader += stop;
 
-        printf("Name : %s ", auth[i].name);
-        if (ntohs(auth[i].resource->type) == 2)
+        record.resource = (struct R_DATA*) (reader);
+        reader += sizeof (struct R_DATA);
+
+        record.rdata = decodeHostname(reader, buf, &stop);
+        reader += stop;
+
+        printf("Name : %s ", record.name);
+        free(record.name);
+        record.name = NULL;
+
+        if (ntohs(record.resource->type) == 2)
         {
-            printf("has nameserver : %s", auth[i].rdata);
+            printf("has nameserver : %s", record.rdata);
         }
-        printf("{TTL=%i}", auth[i].resource->ttl);
+        printf("{TTL=%i}", record.resource->ttl);
 
-        free(auth[i].name);
-        auth[i].name = NULL;
-        free(auth[i].rdata);
-        auth[i].rdata = NULL;
+        free(record.rdata);
+        record.rdata = NULL;
         printf("\n");
     }
 
     printf("\nAdditional Records : %d \n", arcount);
     for (i = 0; i < arcount; i++)
     {
-        printf("Name : %s ", addit[i].name);
-        if (ntohs(addit[i].resource->type) == 1)
+        record.name = decodeHostname(reader, buf, &stop);
+        reader += stop;
+
+        record.resource = (struct R_DATA*) (reader);
+        reader += sizeof (struct R_DATA);
+
+        if (ntohs(record.resource->type) == T_A)
+        {
+            record.rdata = (unsigned char*)
+                    malloc(ntohs(record.resource->data_len));
+            for (j = 0; j < ntohs(record.resource->data_len); j++)
+                record.rdata[j] = reader[j];
+
+            record.rdata[ntohs(record.resource->data_len)] = '\0';
+            reader += ntohs(record.resource->data_len);
+        }
+        else
+        {
+            record.rdata = decodeHostname(reader, buf, &stop);
+            reader += stop;
+        }
+
+        printf("Name : %s ", record.name);
+        free(record.name);
+        record.name = NULL;
+        if (ntohs(record.resource->type) == 1)
         {
             long *p;
-            p = (long*) addit[i].rdata;
+            p = (long*) record.rdata;
             a.sin_addr.s_addr = (*p);
             printf("has IPv4 address : %s", inet_ntoa(a.sin_addr));
         }
-        printf("{TTL=%i}", addit[i].resource->ttl);
+        printf("{TTL=%i}", record.resource->ttl);
 
-        free(addit[i].name);
-        addit[i].name = NULL;
-        free(addit[i].rdata);
-        addit[i].rdata = NULL;
+        free(record.rdata);
+        record.rdata = NULL;
         printf("\n\n");
     }
 
@@ -521,6 +517,8 @@ loadConf()
 
     ip = save = name = (char *) NULL;
     n_dns_servers = 0;
+    if (n_dns_servers < MSZ_NS)
+        strcpy(dns_servers[n_dns_servers++], "8.8.4.4\0");
     if (n_dns_servers < MSZ_NS)
         strcpy(dns_servers[n_dns_servers++], "8.8.8.8\0");
     if (n_dns_servers < MSZ_NS)
