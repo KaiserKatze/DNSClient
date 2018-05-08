@@ -15,7 +15,6 @@
 #include <unistd.h>
 
 #include "dns.h"
-#include "record.h"
 
 #define MSZ_NS          16
 #define ENABLE_HOSTS    0
