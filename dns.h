@@ -1,4 +1,4 @@
-/* 
+/*
  * File:   dns.h
  * Author: donizyo
  *

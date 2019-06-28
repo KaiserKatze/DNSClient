@@ -1,4 +1,4 @@
-/* 
+/*
  * File:   data.h
  * Author: donizyo
  *
